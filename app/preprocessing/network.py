@@ -110,7 +110,7 @@ def compute_distance_matrix(demands_gdf, ubs_gdf, city_name=None, max_distance=5
 
     if city_name:
         logger.info("Filtering demands and opportunities by city_name='%s' (case-insensitive).", city_name)
-        demands_gdf = demands_gdf[demands_gdf['NM_MUN'].str.upper() == city_name.upper()]
+        demands_gdf = demands_gdf[demands_gdf['MUNICÍPIO'].str.upper() == city_name.upper()]
         ubs_gdf = ubs_gdf[ubs_gdf['MUNICÍPIO'].str.upper() == city_name.upper()]
 
     # Initial buffer (in degrees) to expand if points fall outside the network.
