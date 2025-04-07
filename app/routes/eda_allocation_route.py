@@ -115,6 +115,27 @@ def create_coverage_stats(merged_df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("coverage_stats:\n%s", coverage_stats.head())
     return coverage_stats
 
+def create_distance_boxplot(merged_df: pd.DataFrame):
+    """
+    Cria um boxplot de 'distance_km' para visualizar a dispersão e possíveis outliers nas distâncias.
+    """
+    logger.info("Gerando boxplot de 'distance_km'.")
+    if "distance_km" not in merged_df.columns:
+        logger.warning("Não há coluna 'distance_km' no merged_df; não será gerado boxplot.")
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.boxplot(merged_df["distance_km"].dropna(), vert=False)
+    ax.set_title("Boxplot das Distâncias (km)")
+    ax.set_xlabel("Distância (km)")
+    buf = BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
 def create_distance_hist(merged_df: pd.DataFrame):
     """
     Cria um histograma de 'distance_km' para mostrar a distribuição de distâncias.
@@ -207,6 +228,11 @@ async def eda_allocation_endpoint(
 
         # (Opcional) Gera histograma de distâncias
         distance_hist_buf = create_distance_hist(merged_df)
+
+        logger.info("Gerando gráficos gráfico boxplot.")
+        
+        # Gera um box plot com as ditâncias
+        box_plo_distence = create_distance_boxplot(merged_df)
         
         logger.info("Empacotando resultados em um arquivo ZIP.")
         zip_buffer = BytesIO()
@@ -221,6 +247,7 @@ async def eda_allocation_endpoint(
             # 3) PNGs (chart_population, chart_racial)
             zipf.writestr("chart_population.png", chart1_buf.getvalue())
             zipf.writestr("chart_racial.png", chart2_buf.getvalue())
+            
 
             # 4) PDF
             zipf.writestr("report.pdf", pdf_buf.getvalue())
@@ -233,7 +260,11 @@ async def eda_allocation_endpoint(
             # 6) distance_hist.png (se gerado)
             if distance_hist_buf:
                 zipf.writestr("distance_hist.png", distance_hist_buf.getvalue())
-        
+
+            # 6) distance_hist.png (se gerado)
+            if box_plo_distence:
+                zipf.writestr("distance_hist.png", box_plo_distence.getvalue())
+
         zip_buffer.seek(0)
         logger.info("Processo finalizado com sucesso. Retornando arquivo ZIP.")
         return StreamingResponse(
