@@ -12,12 +12,17 @@ app = FastAPI(
   version=settings.APP_VERSION,
 )
 
+origins = [
+    "*",  # cuidado: isso permite tudo
+]
+
+# Middleware do CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Aqui você pode colocar o domínio do frontend se quiser limitar
+    allow_origins=origins,  
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],   
+    allow_headers=["*"],    
 )
 
 logger.info("Starting FastAPI application with title: %s", settings.APP_TITLE)

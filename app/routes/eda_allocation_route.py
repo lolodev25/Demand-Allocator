@@ -10,6 +10,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from app.config import settings
+from pandas.plotting import table
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +33,22 @@ def analyze_allocation(allocation_df: pd.DataFrame, demanda_gdf: gpd.GeoDataFram
         merged_df["geometry"] = merged_df["geometry"].apply(lambda geom: geom.wkt if geom is not None else None)
     
     logger.info("Agrupando dados por 'opportunity_name' e calculando estatísticas.")
+
+    merged_df["total_alfabetizados"] = merged_df[
+    ["15 A 19 ANOS, ALFABETIZADAS",
+     "20 A 24 ANOS, ALFABETIZADAS",
+     "25 A 29 ANOS, ALFABETIZADAS",
+     "30 A 34 ANOS, ALFABETIZADAS",
+     "35 A 39 ANOS, ALFABETIZADAS",
+     "40 A 44 ANOS, ALFABETIZADAS",
+     "45 A 49 ANOS, ALFABETIZADAS",
+     "50 A 54 ANOS, ALFABETIZADAS",
+     "55 A 59 ANOS, ALFABETIZADAS",
+     "60 A 64 ANOS, ALFABETIZADAS",
+     "65 A 69 ANOS, ALFABETIZADAS",
+     "70 A 79 ANOS, ALFABETIZADAS",
+     "80 ANOS OU MAIS, ALFABETIZADAS"]].sum(axis=1)
+
     group = merged_df.groupby("opportunity_name")
     summary = group.agg(
          total_demands = ("demand_id", "count"),
@@ -39,8 +57,24 @@ def analyze_allocation(allocation_df: pd.DataFrame, demanda_gdf: gpd.GeoDataFram
          total_negros = ("RAÇA NEGRA TOTAL", "sum"),
          total_pardos = ("RAÇA PARDA TOTAL", "sum"),
          total_indigenas = ("RAÇA INDÍGENA TOTAL", "sum"),
-         total_amarela = ("RAÇA AMARELA TOTAL", "sum")
+         total_amarela = ("RAÇA AMARELA TOTAL", "sum"),
+         total_15_19=("15-19 ANOS", "sum"),
+         total_20_24=("20-24 ANOS", "sum"),
+         total_25_29=("25-29 ANOS", "sum"),
+         total_30_34=("30-34 ANOS", "sum"),
+         total_35_39=("35-39 ANOS", "sum"),
+         total_40_44=("40-44 ANOS", "sum"),
+         total_45_49=("45-49 ANOS", "sum"),
+         total_50_54=("50-54 ANOS", "sum"),
+         total_55_59=("55-59 ANOS", "sum"),
+         total_60_64=("60-64 ANOS", "sum"),
+         total_65_69=("65-69 ANOS", "sum"),
+         total_70_79=("70-79 ANOS", "sum"),
+         total_80_mais=("80 ANOS OU MAIS", "sum"),
+         total_alfabetizados=("total_alfabetizados", "sum")
+
     ).reset_index()
+
     
     logger.debug("Resumo de estatísticas (primeiras linhas):\n%s", summary.head())
     
@@ -50,6 +84,14 @@ def analyze_allocation(allocation_df: pd.DataFrame, demanda_gdf: gpd.GeoDataFram
     summary["pct_pardos"] = summary["total_pardos"] / summary["total_population"] * 100
     summary["pct_indigenas"] = summary["total_indigenas"] / summary["total_population"] * 100
     summary["pct_amarela"] = summary["total_amarela"] / summary["total_population"] * 100
+    summary["pessoas_analfabetas"] = summary['total_population']-summary["total_alfabetizados"]
+       
+    logger.info("Criando colunas agregadas de faixa etária.")
+    summary["total_15_29_anos"] = (summary["total_15_19"] +summary["total_20_24"] +summary["total_25_29"])
+    summary["total_30_49_anos"] = (summary["total_30_34"] +summary["total_35_39"] +summary["total_40_44"] +summary["total_45_49"])
+    summary["total_50_64_anos"] = (summary["total_50_54"] +summary["total_55_59"] +summary["total_60_64"])
+    summary["total_65_mais_anos"] = (summary["total_65_69"] +summary["total_70_79"] +summary["total_80_mais"])
+    summary['city_name'] = merged_df['NM_MUN']
     
     logger.info("analyze_allocation concluído.")
     return merged_df, summary
@@ -57,16 +99,27 @@ def analyze_allocation(allocation_df: pd.DataFrame, demanda_gdf: gpd.GeoDataFram
 def create_allocation_charts(summary: pd.DataFrame):
     logger.info("Iniciando criação dos gráficos de alocação.")
     
-    # Gráfico 1: Top 10 oportunidades por população atendida
+    # Gráfico 1: Top 10 Oportunidades por População Atendida
     fig1, ax1 = plt.subplots(figsize=(14, 8))
     top_opp = summary.sort_values(by="total_population", ascending=False).head(10)
-    ax1.barh(top_opp["opportunity_name"], top_opp["total_population"], color="blue")
+    
+    bars1 = ax1.barh(
+        top_opp["opportunity_name"], 
+        top_opp["total_population"], 
+        color="#4C72B0"
+    )
 
-    ax1.set_title("Top 10 Oportunidades por População Atendida", fontsize=16)
-    ax1.set_xlabel("População", fontsize=14)
-    ax1.set_ylabel("Oportunidade", fontsize=14)
+    ax1.set_title("Top 10 UBS por População Atendida", fontsize=18, fontweight='bold')
+    ax1.set_xlabel("População Atendida", fontsize=14)
+    ax1.set_ylabel("UBS", fontsize=14)
     ax1.tick_params(axis='both', labelsize=12)
     ax1.invert_yaxis()
+
+    # Adiciona rótulos nas barras
+    for bar in bars1:
+        width = bar.get_width()
+        ax1.annotate(f'{int(width)}', xy=(width, bar.get_y() + bar.get_height() / 2),
+                     xytext=(5, 0), textcoords="offset points", ha='left', va='center', fontsize=12)
 
     buf1 = BytesIO()
     plt.tight_layout()
@@ -75,17 +128,29 @@ def create_allocation_charts(summary: pd.DataFrame):
     plt.close(fig1)
     logger.info("Gráfico 1 (População) criado com sucesso.")
 
-    # Gráfico 2: Média da composição racial
-    fig2, ax2 = plt.subplots(figsize=(14, 8))
+    # Gráfico 2: Média da Composição Racial
+    fig2, ax2 = plt.subplots(figsize=(10, 6))
     avg_pct = summary[["pct_negros", "pct_pardos", "pct_indigenas", "pct_amarela"]].mean()
-    avg_pct.plot(kind="bar", ax=ax2, color=["brown", "orange", "purple", "yellow"])
 
-    ax2.set_title("Média de Composição Racial (%)", fontsize=16)
+    bars2 = ax2.bar(
+        ["Negros", "Pardos", "Indígenas", "Amarela"], 
+        avg_pct, 
+        color=["#5D3A9B", "#B07AA1", "#4C9A2A", "#F9C846"]
+    )
+
+    ax2.set_title("Média da Composição Racial (%)", fontsize=18, fontweight='bold')
     ax2.set_ylabel("Porcentagem (%)", fontsize=14)
-    ax2.set_xticklabels(["Negros", "Pardos", "Indígenas", "Amarela"], rotation=0, fontsize=12)
+    ax2.set_xlabel("Grupo Racial", fontsize=14)
     ax2.tick_params(axis='y', labelsize=12)
-    plt.tight_layout()
+
+    # Adiciona rótulos nas barras
+    for bar in bars2:
+        height = bar.get_height()
+        ax2.annotate(f'{height:.1f}%', xy=(bar.get_x() + bar.get_width() / 2, height),
+                     xytext=(0, 3), textcoords="offset points", ha='center', fontsize=12)
+
     buf2 = BytesIO()
+    plt.tight_layout()
     plt.savefig(buf2, format="png")
     buf2.seek(0)
     plt.close(fig2)
@@ -105,6 +170,7 @@ def create_coverage_stats(merged_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     group_opp = merged_df.groupby("opportunity_name")
+
     coverage_stats = group_opp.agg(
         total_demands=("demand_id", "count"),
         avg_distance=("distance_km", "mean"),
@@ -136,25 +202,51 @@ def create_distance_boxplot(merged_df: pd.DataFrame):
     return buf
 
 
-def create_distance_hist(merged_df: pd.DataFrame):
+def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
     """
-    Cria um histograma de 'distance_km' para mostrar a distribuição de distâncias.
+    Cria um histograma da coluna 'distance_km' utilizando apenas Matplotlib.
+
+    Args:
+        merged_df (pd.DataFrame): DataFrame contendo a coluna 'distance_km'.
+
+    Returns:
+        BytesIO: Imagem do gráfico em buffer (PNG) para exportação ou exibição.
     """
-    logger.info("Gerando histograma de 'distance_km'.")
+    logger.info("Gerando histograma de 'distance_km' com Matplotlib.")
+
     if "distance_km" not in merged_df.columns:
-        logger.warning("Não há coluna 'distance_km' no merged_df; não será gerado histograma.")
+        logger.warning("Não há coluna 'distance_km' no merged_df; histograma não será gerado.")
         return None
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    merged_df["distance_km"].hist(bins=30, ax=ax)
-    ax.set_title("Distribuição de Distâncias (km)")
-    ax.set_xlabel("Distância (km)")
-    ax.set_ylabel("Frequência")
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Histograma
+    counts, bins, patches = ax.hist(
+        merged_df["distance_km"], 
+        bins=30, 
+        color="#4C72B0", 
+        edgecolor="black", 
+        alpha=0.7
+    )
+
+    # Curva de densidade simples (estimativa manual com np.histogram e interpolação)
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+    density = counts / sum(counts)  # Normaliza
+
+    ax.plot(bin_centers, density * max(counts), color="darkred", linewidth=2, label="Estimativa de Densidade")
+
+    ax.set_title(f"Distribuição das Distâncias até UBS\nTotal de Registros: {len(merged_df)}", fontsize=14, weight="bold")
+    ax.set_xlabel("Distância até UBS (km)", fontsize=12)
+    ax.set_ylabel("Frequência", fontsize=12)
+    ax.legend()
+    ax.grid(visible=True, linestyle='--', alpha=0.5)
+
     buf = BytesIO()
     plt.tight_layout()
-    plt.savefig(buf, format="png")
+    plt.savefig(buf, format="png", dpi=300)
     buf.seek(0)
     plt.close(fig)
+
     return buf
 
 def generate_allocation_pdf(summary: pd.DataFrame):
@@ -162,18 +254,71 @@ def generate_allocation_pdf(summary: pd.DataFrame):
     pdf_buffer = BytesIO()
     c = canvas.Canvas(pdf_buffer, pagesize=letter)
     width, height = letter
+
+    city_name = summary['city_name'].iloc[0]
+    total_population = summary['total_population'].sum()
+    total_ubs = summary['opportunity_name'].nunique()
+
+    # Primeira página - Capa/Sumário
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(50, height - 100, "Relatório de Análise Socioeconômica")
+    c.line(50, height - 110, width - 50, height - 110)  # linha divisória
+    c.setFont("Helvetica", 12)
+    c.drawString(50, height - 140, "Sumário:")
+    c.drawString(70, height - 160, "1. Visão Geral")
+    c.drawString(70, height - 180, "2. Detalhamento por UBS")
+    c.showPage()
+
+    # Segunda página - Visão Geral
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, height - 50, "Relatório de Análise Socioeconômica")
+    c.drawString(50, height - 50, "Visão Geral")
     c.setFont("Helvetica", 12)
     y = height - 80
 
+    c.drawString(50, y, f"Cidade: {city_name}")
+    y -= 20
+    c.drawString(50, y, f"População Total: {total_population}")
+    y -= 20
+    c.drawString(50, y, f"Total de UBS: {total_ubs}")
+    y -= 40
+    c.drawString(50, y, f"Este relatório apresenta uma análise socioeconômica da cidade,  {city_name}")
+    y -= 15
+    c.drawString(50, y, "considerando o atendimento das UBS e os principais indicadores sociais.")
+    y -= 30
+    c.drawString(50, y, "Nas próximas páginas, detalhamos informações por UBS específica.")
+    c.showPage()
+    
+    # Terceira página em diante - Detalhamento por UBS
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, height - 50, "Detalhamento por UBS")
+    c.setFont("Helvetica", 12)
+    y = height - 80
+
+    line_height = 15  # espaçamento entre linhas
+    block_spacing = 30  # espaço extra entre blocos
+
     for _, row in summary.iterrows():
         c.drawString(50, y, f"Oportunidade: {row['opportunity_name']}")
-        c.drawString(70, y-15, f"População Atendida: {row['total_population']:.0f}")
-        c.drawString(70, y-30, f"Distância Média: {row['avg_distance']:.2f} km")
-        c.drawString(70, y-45, f"Negros: {row['pct_negros']:.2f}%, Pardos: {row['pct_pardos']:.2f}%, "
-                    f"Indígenas: {row['pct_indigenas']:.2f}%, Amarelas: {row['pct_amarela']:.2f}%")
-        y -= 70
+        y -= line_height
+        c.drawString(70, y, f"População Atendida: {row['total_population']:.0f}")
+        y -= line_height
+        c.drawString(70, y, f"Distância Média: {row['avg_distance']:.2f} km")
+        y -= line_height
+        c.drawString(70, y, f"Negros: {row['pct_negros']:.2f}%, Pardos: {row['pct_pardos']:.2f}%, "
+                           f"Indígenas: {row['pct_indigenas']:.2f}%, Amarelas: {row['pct_amarela']:.2f}%")
+        y -= line_height
+        c.drawString(70, y, f"Pessoas com 15-29 anos: {row['total_15_29_anos']}")
+        y -= line_height
+        c.drawString(70, y, f"Pessoas com 30-49 anos: {row['total_30_49_anos']}")
+        y -= line_height
+        c.drawString(70, y, f"Pessoas com 50-64 anos: {row['total_50_64_anos']}")
+        y -= line_height
+        c.drawString(70, y, f"Pessoas com 65 anos ou mais: {row['total_65_mais_anos']}")
+        y -= line_height
+        c.drawString(70, y, f"Total Analfabetos: {row['pessoas_analfabetas']}")
+        y -= block_spacing
+
+        # Verifica se precisa de nova página
         if y < 100:
             c.showPage()
             c.setFont("Helvetica", 12)
@@ -183,6 +328,71 @@ def generate_allocation_pdf(summary: pd.DataFrame):
     pdf_buffer.seek(0)
     logger.info("Relatório PDF gerado com sucesso.")
     return pdf_buffer
+
+
+def create_summary_table(summary: pd.DataFrame) -> pd.DataFrame:
+    logger.info("Iniciando criação da Tabela Resumo de Indicadores.")
+
+    mais_sobrecarregada = summary.loc[summary['total_population'].idxmax()]['opportunity_name']
+    ocupacao_max = summary['total_population'].max()
+
+    mais_subutilizada = summary.loc[summary['total_population'].idxmin()]['opportunity_name']
+    ocupacao_min = summary['total_population'].min()
+
+    media_ocupacao = summary['total_population'].mean()
+    mediana_ocupacao = summary['total_population'].median()
+    desvio_padrao_ocupacao = summary['total_population'].std()
+
+    resumo = pd.DataFrame({
+        'Indicador': [
+            'UBS mais sobrecarregada',
+            'UBS mais subutilizada',
+            'Média de ocupação',
+            'Mediana de ocupação',
+            'Desvio-padrão de ocupação'
+        ],
+        'Valor': [
+            f"{mais_sobrecarregada} ({ocupacao_max:.0f} pessoas)",
+            f"{mais_subutilizada} ({ocupacao_min:.0f} pessoas)",
+            f"{media_ocupacao:.2f}",
+            f"{mediana_ocupacao:.2f}",
+            f"{desvio_padrao_ocupacao:.2f}"
+        ]
+    })
+
+    logger.info("Tabela Resumo criada com sucesso.")
+    return resumo
+
+def save_summary_table_image(resumo: pd.DataFrame) -> BytesIO:
+    logger.info("Iniciando criação da imagem da Tabela Resumo.")
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.axis('off')
+
+    tabela = table(ax, resumo, loc='center', cellLoc='center', colWidths=[0.4, 0.6])
+    tabela.auto_set_font_size(False)
+    tabela.set_fontsize(12)
+
+    # Estilização
+    for key, cell in tabela.get_celld().items():
+        cell.set_edgecolor('black')
+        cell.set_linewidth(1.2)
+        if key[0] == 0:
+            cell.set_facecolor('#C4DFDF')
+            cell.set_fontsize(14)
+            cell.set_text_props(weight='bold')
+
+    plt.tight_layout()
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", bbox_inches='tight', dpi=150)
+    buf.seek(0)
+    plt.close(fig)
+
+    logger.info("Imagem da Tabela Resumo criada com sucesso.")
+    return buf
+
+
 
 @router.post("/allocation")
 async def eda_allocation_endpoint(
@@ -234,6 +444,10 @@ async def eda_allocation_endpoint(
         # Gera um box plot com as ditâncias
         box_plo_distence = create_distance_boxplot(merged_df)
         
+        logger.info("Gerando tabela mais descritiva por UBS")
+        resumo = create_summary_table(summary)
+        table_image = save_summary_table_image(resumo)
+
         logger.info("Empacotando resultados em um arquivo ZIP.")
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
@@ -247,7 +461,9 @@ async def eda_allocation_endpoint(
             # 3) PNGs (chart_population, chart_racial)
             zipf.writestr("chart_population.png", chart1_buf.getvalue())
             zipf.writestr("chart_racial.png", chart2_buf.getvalue())
-            
+
+            logger.info('Table gerada')
+            zipf.writestr("table_image.png", table_image.getvalue())
 
             # 4) PDF
             zipf.writestr("report.pdf", pdf_buf.getvalue())
