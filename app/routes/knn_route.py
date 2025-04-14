@@ -167,7 +167,7 @@ def allocate_demands_knn_api(
         #Gera box plot
         box_plot = create_distance_boxplot(merged_df)
         # Gera o relatório PDF
-        pdf_buf = generate_allocation_pdf(summary)
+        pdf_buf = generate_allocation_pdf(summary, merged_df)
 
         # Empacota tudo em um arquivo ZIP
         zip_buffer = io.BytesIO()

@@ -11,7 +11,9 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from app.config import settings
 from pandas.plotting import table
-
+import numpy as np
+from matplotlib.patches import Patch
+from matplotlib.ticker import MultipleLocator
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -202,6 +204,8 @@ def create_distance_boxplot(merged_df: pd.DataFrame):
     return buf
 
 
+
+
 def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
     """
     Cria um histograma da coluna 'distance_km' utilizando apenas Matplotlib.
@@ -229,9 +233,9 @@ def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
         alpha=0.7
     )
 
-    # Curva de densidade simples (estimativa manual com np.histogram e interpolação)
+    # Curva de densidade simples
     bin_centers = 0.5 * (bins[1:] + bins[:-1])
-    density = counts / sum(counts)  # Normaliza
+    density = counts / sum(counts)
 
     ax.plot(bin_centers, density * max(counts), color="darkred", linewidth=2, label="Estimativa de Densidade")
 
@@ -241,6 +245,8 @@ def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
     ax.legend()
     ax.grid(visible=True, linestyle='--', alpha=0.5)
 
+    ax.xaxis.set_major_locator(MultipleLocator(5))
+
     buf = BytesIO()
     plt.tight_layout()
     plt.savefig(buf, format="png", dpi=300)
@@ -249,7 +255,8 @@ def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
 
     return buf
 
-def generate_allocation_pdf(summary: pd.DataFrame):
+
+def generate_allocation_pdf(summary: pd.DataFrame, merged_df: pd.DataFrame):
     logger.info("Iniciando geração do PDF de relatório.")
     pdf_buffer = BytesIO()
     c = canvas.Canvas(pdf_buffer, pagesize=letter)
@@ -318,16 +325,76 @@ def generate_allocation_pdf(summary: pd.DataFrame):
         c.drawString(70, y, f"Total Analfabetos: {row['pessoas_analfabetas']}")
         y -= block_spacing
 
-        # Verifica se precisa de nova página
+
+    if y < 100:
+        c.showPage()
+        c.setFont("Helvetica", 12)
+        y = height - 50
+
+
+  
+    hist_buffer = create_distance_hist(merged_df)
+    box_plot = create_distance_boxplot(merged_df)
+    
+
+    if hist_buffer and box_plot:
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 50, "Análise da Distribuição das Distâncias até UBS")
+
+        c.setFont("Helvetica", 12)
+        c.drawString(50, height - 70, "Os gráficos abaixo permitem uma análise visual completa da distribuição das distâncias")
+        c.drawString(50, height - 85, "entre a população e as UBS. O histograma (à esquerda) mostra as faixas de distância mais")
+        c.drawString(50, height - 100, "frequentes, enquanto o boxplot (à direita) facilita a identificação de outliers e a")
+        c.drawString(50, height - 115, "dispersão dos dados em torno da mediana.")
+
+        img_hist = ImageReader(hist_buffer)
+        img_box = ImageReader(box_plot)
+
+        
+        c.drawImage(img_hist, 50, height - 420, width=240, height=300, preserveAspectRatio=True)
+        c.drawImage(img_box, 310, height - 420, width=240, height=300, preserveAspectRatio=True)
+
+        c.showPage()
+
         if y < 100:
             c.showPage()
             c.setFont("Helvetica", 12)
             y = height - 50
 
+    
+    buf_populacao, buf_composicao = create_allocation_charts(summary)
+
+    
+    if buf_populacao:
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 50, "Top 10 UBS por População Atendida")
+
+        c.setFont("Helvetica", 12)
+        c.drawString(50, height - 70, "Este gráfico mostra as 10 UBS com maior população atendida.")
+        c.drawString(50, height - 85, "Ele destaca onde há maior concentração de demanda por serviços de saúde.")
+
+        img1 = ImageReader(buf_populacao)
+        c.drawImage(img1, 50, height - 480, width=500, height=400, preserveAspectRatio=True)
+
+        c.showPage()
+
+    
+    if buf_composicao:
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 50, "Média da Composição Racial da População")
+
+        c.setFont("Helvetica", 12)
+        c.drawString(50, height - 70, "Este gráfico apresenta a média da distribuição racial da população atendida.")
+        c.drawString(50, height - 85, "A visualização permite entender a representatividade de diferentes grupos raciais.")
+
+        img2 = ImageReader(buf_composicao)
+        c.drawImage(img2, 50, height - 420, width=500, height=350, preserveAspectRatio=True)
+        c.showPage()
+
     c.save()
     pdf_buffer.seek(0)
     logger.info("Relatório PDF gerado com sucesso.")
-    return pdf_buffer
+    return pdf_buffer 
 
 
 def create_summary_table(summary: pd.DataFrame) -> pd.DataFrame:
@@ -431,7 +498,7 @@ async def eda_allocation_endpoint(
         chart1_buf, chart2_buf = create_allocation_charts(summary)
         
         logger.info("Gerando relatório PDF.")
-        pdf_buf = generate_allocation_pdf(summary)
+        pdf_buf = generate_allocation_pdf(summary, merged_df)
 
         # (Opcional) Gera estatísticas adicionais de cobertura
         coverage_stats = create_coverage_stats(merged_df)
