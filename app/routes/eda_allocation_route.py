@@ -14,6 +14,7 @@ from pandas.plotting import table
 import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import MultipleLocator
+import textwrap
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -255,6 +256,111 @@ def create_distance_hist(merged_df: pd.DataFrame) -> BytesIO:
 
     return buf
 
+import textwrap
+
+def gerar_perguntas_respostas(summary: pd.DataFrame, merged_df: pd.DataFrame):
+    perguntas_respostas = []
+
+    perguntas_respostas.append(
+        "Este relatório é guiado por um conjunto de perguntas-problema que "
+        "orientam a análise socioeconômica e espacial do atendimento por UBS.\n"
+        "A seguir, estão listadas as principais questões acompanhadas de suas respectivas "
+        "respostas com base nos dados analisados."
+    )
+    perguntas_respostas.append("\n")
+
+    # 1. Capacidade Instalada vs. Demanda Alocada
+    perguntas_respostas.append("1. Capacidade Instalada vs. Demanda Alocada\n")
+
+    top_ubs = summary.sort_values(by="total_population", ascending=False).head(3)
+    perguntas_respostas.append("   - Quais são as UBS mais sobrecarregadas?")
+    top_ubs_list = ', '.join(top_ubs['opportunity_name'])
+    perguntas_respostas.extend(textwrap.wrap(
+        f"     As UBS com maior população alocada são: {top_ubs_list}.", width=100
+    ))
+
+    media_atendimento = summary["total_population"].mean()
+    criticas = summary[summary["total_population"] > media_atendimento * 1.5]
+    perguntas_respostas.append("   - Existem UBS operando em situação crítica de capacidade?")
+    if not criticas.empty:
+        criticas_list = ', '.join(criticas['opportunity_name'])
+        perguntas_respostas.extend(textwrap.wrap(
+            f"     Sim, as UBS {criticas_list} atendem mais de 50% acima da média esperada.", width=100
+        ))
+    else:
+        perguntas_respostas.append("     Não há UBS com carga crítica detectada acima de 50% da média de atendimento.")
+
+    subutilizadas = summary[summary["total_population"] < media_atendimento * 0.5]
+    perguntas_respostas.append("   - Existem UBS com subutilização em relação à sua capacidade?")
+    if not subutilizadas.empty:
+        subutilizadas_list = ', '.join(subutilizadas['opportunity_name'])
+        perguntas_respostas.extend(textwrap.wrap(
+            f"     Sim, as UBS {subutilizadas_list} estão atendendo menos de 50% da média populacional.", width=100
+        ))
+    else:
+        perguntas_respostas.append("     Todas as UBS estão operando acima de 50% da média populacional.")
+
+    perguntas_respostas.append("\n")
+
+    # 2. Perfil Socioeconômico da População
+    perguntas_respostas.append("2. Perfil Socioeconômico da População\n")
+
+    vulneraveis = summary[
+        summary["pct_negros"] + summary["pct_pardos"] + summary["pct_indigenas"] > 80
+    ]
+    perguntas_respostas.append("   - Quais UBS estão localizadas em áreas com altos índices de vulnerabilidade social?")
+    if not vulneraveis.empty:
+        vulneraveis_list = ', '.join(vulneraveis['opportunity_name'])
+        perguntas_respostas.extend(textwrap.wrap(
+            f"     As UBS em áreas com alta presença de grupos racialmente vulneráveis são: {vulneraveis_list}.", width=100
+        ))
+    else:
+        perguntas_respostas.append("     Não foram identificadas UBS com vulnerabilidade racial superior a 80%.")
+
+    perguntas_respostas.append("   - Qual é a composição etária e racial da população atendida por cada UBS?")
+    perguntas_respostas.append("     A composição é detalhada na seção 'Detalhamento por UBS' deste relatório.")
+
+    perguntas_respostas.append("   - Existem populações marginalizadas (preta, parda, indígena) com acesso desigual?")
+    if not vulneraveis.empty:
+        perguntas_respostas.append(
+            "     Sim, há concentração de grupos vulneráveis em algumas UBS. Isso exige atenção para evitar desigualdade no acesso."
+        )
+    else:
+        perguntas_respostas.append("     Os dados não indicam concentração crítica de populações marginalizadas.")
+
+    perguntas_respostas.append("\n")
+
+    # 3. Acessibilidade e Proximidade
+    perguntas_respostas.append("3. Acessibilidade e Proximidade\n")
+
+    avg_distances = summary["avg_distance"]
+    perguntas_respostas.append("   - Qual é a distância média entre cada região e a UBS à qual foi alocada?")
+    perguntas_respostas.append(f"     A distância média geral é de {avg_distances.mean():.2f} km.")
+
+    perguntas_respostas.append("   - Há regiões com distância excessiva da UBS mais próxima?")
+    acima_limite = merged_df[merged_df["distance_km"] > 4]
+    if not acima_limite.empty:
+        perc = 100 * len(acima_limite) / len(merged_df)
+        perguntas_respostas.append(
+            f"     Sim, {len(acima_limite)} pessoas ({perc:.2f}%) estão a mais de 4 km da UBS alocada."
+        )
+    else:
+        perguntas_respostas.append("     Não há pessoas alocadas a UBS acima de 4 km.")
+
+    perguntas_respostas.append("   - Qual a dispersão das distâncias dentro da área de cobertura de cada UBS?")
+    perguntas_respostas.append(
+        f"     O desvio padrão médio da distância por UBS é de {summary['avg_distance'].std():.2f} km."
+    )
+
+    perguntas_respostas.append("   - Quantas pessoas estão alocadas a UBS fora do raio ideal de cobertura (ex: acima de 4km)?")
+    perguntas_respostas.append(
+        f"     Total de pessoas fora do raio ideal de cobertura: {len(acima_limite)}."
+    )
+
+    return perguntas_respostas
+
+
+
 
 def generate_allocation_pdf(summary: pd.DataFrame, merged_df: pd.DataFrame):
     logger.info("Iniciando geração do PDF de relatório.")
@@ -262,139 +368,168 @@ def generate_allocation_pdf(summary: pd.DataFrame, merged_df: pd.DataFrame):
     c = canvas.Canvas(pdf_buffer, pagesize=letter)
     width, height = letter
 
+    # Constantes de layout
+    margin = 50
+    line_height = 15
+    block_spacing = 30
+    min_y_threshold = 100
+
+    def check_page_space(c, y, reset=False):
+        """Cria nova página se espaço vertical for insuficiente."""
+        if y < min_y_threshold or reset:
+            c.showPage()
+            c.setFont("Helvetica", 12)
+            return height - margin
+        return y
+
     city_name = summary['city_name'].iloc[0]
     total_population = summary['total_population'].sum()
     total_ubs = summary['opportunity_name'].nunique()
 
-    # Primeira página - Capa/Sumário
+    # Capa/Sumário
     c.setFont("Helvetica-Bold", 20)
-    c.drawString(50, height - 100, "Relatório de Análise Socioeconômica")
-    c.line(50, height - 110, width - 50, height - 110)  # linha divisória
+    c.drawString(margin, height - 100, "Relatório de Análise Socioeconômica")
+    c.line(margin, height - 110, width - margin, height - 110)
     c.setFont("Helvetica", 12)
-    c.drawString(50, height - 140, "Sumário:")
-    c.drawString(70, height - 160, "1. Visão Geral")
-    c.drawString(70, height - 180, "2. Detalhamento por UBS")
+    c.drawString(margin, height - 140, "Sumário:")
+    c.drawString(margin + 20, height - 160, "1. Visão Geral")
+    c.drawString(margin + 20, height - 180, "2. Detalhamento por UBS")
+    c.drawString(margin + 20, height - 200, "3. Perguntas-Guia")
+    c.drawString(margin + 20, height - 220, "4. Gráficos e Visualizações")
     c.showPage()
 
-    # Segunda página - Visão Geral
+    # Visão Geral
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, height - 50, "Visão Geral")
+    c.drawString(margin, height - 50, "1. Visão Geral")
     c.setFont("Helvetica", 12)
     y = height - 80
 
-    c.drawString(50, y, f"Cidade: {city_name}")
-    y -= 20
-    c.drawString(50, y, f"População Total: {total_population}")
-    y -= 20
-    c.drawString(50, y, f"Total de UBS: {total_ubs}")
+    c.drawString(margin, y, f"Cidade: {city_name}")
+    y -= line_height
+    c.drawString(margin, y, f"População Total: {total_population}")
+    y -= line_height
+    c.drawString(margin, y, f"Total de UBS: {total_ubs}")
     y -= 40
-    c.drawString(50, y, f"Este relatório apresenta uma análise socioeconômica da cidade,  {city_name}")
-    y -= 15
-    c.drawString(50, y, "considerando o atendimento das UBS e os principais indicadores sociais.")
-    y -= 30
-    c.drawString(50, y, "Nas próximas páginas, detalhamos informações por UBS específica.")
+    c.drawString(margin, y, f"Este relatório apresenta uma análise socioeconômica da cidade {city_name}.")
+    y -= line_height
+    c.drawString(margin, y, "Considera o atendimento das UBS e os principais indicadores sociais.")
+    y -= block_spacing
+    c.drawString(margin, y, "Nas próximas páginas, detalhamos informações por UBS específica.")
     c.showPage()
-    
-    # Terceira página em diante - Detalhamento por UBS
+
+    # Detalhamento por UBS
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, height - 50, "Detalhamento por UBS")
+    c.drawString(margin, height - 50, "2. Detalhamento por UBS")
     c.setFont("Helvetica", 12)
     y = height - 80
-
-    line_height = 15  # espaçamento entre linhas
-    block_spacing = 30  # espaço extra entre blocos
 
     for _, row in summary.iterrows():
-        c.drawString(50, y, f"Oportunidade: {row['opportunity_name']}")
+        if y < min_y_threshold:
+            y = check_page_space(c, y, reset=True)
+
+        c.drawString(margin, y, f"Oportunidade: {row['opportunity_name']}")
         y -= line_height
-        c.drawString(70, y, f"População Atendida: {row['total_population']:.0f}")
+        c.drawString(margin + 20, y, f"População Atendida: {row['total_population']:.0f}")
         y -= line_height
-        c.drawString(70, y, f"Distância Média: {row['avg_distance']:.2f} km")
+        c.drawString(margin + 20, y, f"Distância Média: {row['avg_distance']:.2f} km")
         y -= line_height
-        c.drawString(70, y, f"Negros: {row['pct_negros']:.2f}%, Pardos: {row['pct_pardos']:.2f}%, "
-                           f"Indígenas: {row['pct_indigenas']:.2f}%, Amarelas: {row['pct_amarela']:.2f}%")
+        c.drawString(margin + 20, y, f"Negros: {row['pct_negros']:.2f}%, Pardos: {row['pct_pardos']:.2f}%, "
+                                     f"Indígenas: {row['pct_indigenas']:.2f}%, Amarelas: {row['pct_amarela']:.2f}%")
         y -= line_height
-        c.drawString(70, y, f"Pessoas com 15-29 anos: {row['total_15_29_anos']}")
+        c.drawString(margin + 20, y, f"Pessoas com 15-29 anos: {row['total_15_29_anos']}")
         y -= line_height
-        c.drawString(70, y, f"Pessoas com 30-49 anos: {row['total_30_49_anos']}")
+        c.drawString(margin + 20, y, f"Pessoas com 30-49 anos: {row['total_30_49_anos']}")
         y -= line_height
-        c.drawString(70, y, f"Pessoas com 50-64 anos: {row['total_50_64_anos']}")
+        c.drawString(margin + 20, y, f"Pessoas com 50-64 anos: {row['total_50_64_anos']}")
         y -= line_height
-        c.drawString(70, y, f"Pessoas com 65 anos ou mais: {row['total_65_mais_anos']}")
+        c.drawString(margin + 20, y, f"Pessoas com 65 anos ou mais: {row['total_65_mais_anos']}")
         y -= line_height
-        c.drawString(70, y, f"Total Analfabetos: {row['pessoas_analfabetas']}")
+        c.drawString(margin + 20, y, f"Total Analfabetos: {row['pessoas_analfabetas']}")
         y -= block_spacing
 
+    # Perguntas e respostas
+    y = check_page_space(c, y, reset=True)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(margin, height - 50, "3. Perguntas-Guia da Análise com Respostas")
+    c.setFont("Helvetica", 11)
+    y = height - 80
 
-    if y < 100:
-        c.showPage()
-        c.setFont("Helvetica", 12)
-        y = height - 50
+    perguntas_respostas = gerar_perguntas_respostas(summary, merged_df)
+    for linha in perguntas_respostas:
+        y -= line_height
+        c.drawString(margin, y, linha)
+        y = check_page_space(c, y)
 
-
-  
+    # Gráficos
     hist_buffer = create_distance_hist(merged_df)
     box_plot = create_distance_boxplot(merged_df)
-    
 
     if hist_buffer and box_plot:
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(50, height - 50, "Análise da Distribuição das Distâncias até UBS")
-
-        c.setFont("Helvetica", 12)
-        c.drawString(50, height - 70, "Os gráficos abaixo permitem uma análise visual completa da distribuição das distâncias")
-        c.drawString(50, height - 85, "entre a população e as UBS. O histograma (à esquerda) mostra as faixas de distância mais")
-        c.drawString(50, height - 100, "frequentes, enquanto o boxplot (à direita) facilita a identificação de outliers e a")
-        c.drawString(50, height - 115, "dispersão dos dados em torno da mediana.")
-
-        img_hist = ImageReader(hist_buffer)
-        img_box = ImageReader(box_plot)
-
-        
-        c.drawImage(img_hist, 50, height - 420, width=240, height=300, preserveAspectRatio=True)
-        c.drawImage(img_box, 310, height - 420, width=240, height=300, preserveAspectRatio=True)
-
-        c.showPage()
-
-        if y < 100:
+        if y < 400:
             c.showPage()
-            c.setFont("Helvetica", 12)
             y = height - 50
 
-    
-    buf_populacao, buf_composicao = create_allocation_charts(summary)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin, y, "Análise da Distribuição das Distâncias até UBS")
+    y -= 20
 
-    
+    c.setFont("Helvetica", 12)
+    explicacao = [
+        "Os gráficos abaixo permitem uma análise visual completa da distribuição das distâncias",
+        "entre a população e as UBS. O histograma (primeiro) mostra as faixas de distância mais",
+        "frequentes, enquanto o boxplot (abaixo) facilita a identificação de outliers e a",
+        "dispersão dos dados em torno da mediana."
+    ]
+    for linha in explicacao:
+        c.drawString(margin, y, linha)
+        y -= line_height
+
+    img_hist = ImageReader(hist_buffer)
+    img_box = ImageReader(box_plot)
+    altura_imagem = 250
+    largura_imagem = 500
+
+    if y - altura_imagem < 100:
+        c.showPage()
+        y = height - 50
+
+    c.drawImage(img_hist, margin, y - altura_imagem, width=largura_imagem, height=altura_imagem, preserveAspectRatio=True)
+    y -= altura_imagem + 20
+    if y - altura_imagem < 100:
+        c.showPage()
+        y = height - 50
+
+    c.drawImage(img_box, margin, y - altura_imagem, width=largura_imagem, height=altura_imagem, preserveAspectRatio=True)
+    y -= altura_imagem + 20
+
+
+
+    # Gráfico: Top 10 UBS por população
+    buf_populacao, buf_composicao = create_allocation_charts(summary)
     if buf_populacao:
         c.setFont("Helvetica-Bold", 14)
-        c.drawString(50, height - 50, "Top 10 UBS por População Atendida")
-
+        c.drawString(margin, height - 50, "Top 10 UBS por População Atendida")
         c.setFont("Helvetica", 12)
-        c.drawString(50, height - 70, "Este gráfico mostra as 10 UBS com maior população atendida.")
-        c.drawString(50, height - 85, "Ele destaca onde há maior concentração de demanda por serviços de saúde.")
-
+        c.drawString(margin, height - 70, "UBS com maior concentração de atendimentos.")
         img1 = ImageReader(buf_populacao)
-        c.drawImage(img1, 50, height - 480, width=500, height=400, preserveAspectRatio=True)
-
+        c.drawImage(img1, margin, height - 480, width=500, height=400, preserveAspectRatio=True)
         c.showPage()
 
-    
+    # Gráfico: Composição Racial
     if buf_composicao:
         c.setFont("Helvetica-Bold", 14)
-        c.drawString(50, height - 50, "Média da Composição Racial da População")
-
+        c.drawString(margin, height - 50, "Média da Composição Racial da População")
         c.setFont("Helvetica", 12)
-        c.drawString(50, height - 70, "Este gráfico apresenta a média da distribuição racial da população atendida.")
-        c.drawString(50, height - 85, "A visualização permite entender a representatividade de diferentes grupos raciais.")
-
+        c.drawString(margin, height - 70, "Visualização da representatividade racial da população atendida.")
         img2 = ImageReader(buf_composicao)
-        c.drawImage(img2, 50, height - 420, width=500, height=350, preserveAspectRatio=True)
+        c.drawImage(img2, margin, height - 420, width=500, height=350, preserveAspectRatio=True)
         c.showPage()
 
     c.save()
     pdf_buffer.seek(0)
     logger.info("Relatório PDF gerado com sucesso.")
-    return pdf_buffer 
+    return pdf_buffer
+
 
 
 def create_summary_table(summary: pd.DataFrame) -> pd.DataFrame:
